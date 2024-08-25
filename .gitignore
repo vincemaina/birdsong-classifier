@@ -7,3 +7,5 @@ mini_speech_commands.zip
 api_cache
 bird_recordings.csv
 bird_recordings
+.vscode
+__pycache__
