@@ -14,3 +14,5 @@ best_model.pkl
 
 api_responses
 downloaded_recordings
+
+*.egg-info
