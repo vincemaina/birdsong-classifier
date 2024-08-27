@@ -2,10 +2,13 @@ import requests
 import time
 import json
 import os
+import librosa
 
 
 BASE_API_ENDPOINT = "https://xeno-canto.org/api/2/recordings"
-CACHE_PATH = "./data/api_cache/"
+CACHE_PATH = "./data/api_responses/"
+RECORDINGS_PATH = "./data/downloaded_recordings/"
+SAMPLE_RATE = 16000
 
 
 class XenoCantoApi:
@@ -67,10 +70,40 @@ class XenoCantoApi:
 
         return json_data
 
+    def load_recording(self, id: int):
+        """Downloads the audio file with the given id from xeno-canto.org"""
 
-client = XenoCantoApi()
+        # Construct the file path
+        file_path = RECORDINGS_PATH + str(id)
+
+        # Download file it not already saved
+        if not os.path.exists(file_path):
+            print(f"Downloading file with id {id}")
+            res = requests.get(f"https://xeno-canto.org/{id}/download")
+            if res.status_code == 200:
+                # Save the file
+                os.makedirs(RECORDINGS_PATH)
+                with open(file_path, "wb") as file:
+                    file.write(res.content)
+                print(f"File saved successfully as {file_path}")
+            else:
+                print(f"Request failed with status code {res.status_code}")
+                raise Exception(f"Failed to download file with id {id}")
+
+        return librosa.load(path=file_path, sr=SAMPLE_RATE, mono=True)
+
+
+client = XenoCantoApi()  # Singleton instance
 
 
 if __name__ == "__main__":
     data = client.query(genus="fringilla", subspecies="coelebs")
     print("Number of recordings:", data["numRecordings"])
+
+    first_recording_id = data["recordings"][0]["id"]
+    print("First recording:", first_recording_id)
+
+    y, sr = client.load_recording(first_recording_id)
+    print("Successfully loaded recording.")
+
+    print("Samples:", y)
