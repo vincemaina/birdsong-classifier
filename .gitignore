@@ -1,4 +1,5 @@
 .venv
+venv
 
 __MACOSX
 simple_audio.ipynb
