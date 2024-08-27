@@ -8,5 +8,5 @@ birds = [
     ("Cyanistes", "caeruleus"),  # Blue Tit
     ("Cuculus", "canorus"),  # Cuckoo
     ("Troglodytes", "troglodytes"),  # Wren
-    ("Sylvia", "atricapilla")  # Eurasian Blackcap
+    ("Sylvia", "atricapilla"),  # Eurasian Blackcap
 ]
