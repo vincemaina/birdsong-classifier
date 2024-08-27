@@ -9,3 +9,4 @@ bird_recordings.csv
 bird_recordings
 .vscode
 __pycache__
+best_model.pkl
