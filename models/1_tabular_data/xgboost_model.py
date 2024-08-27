@@ -8,6 +8,7 @@ from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from data import xeno_canto_api
+from multiprocessing import Pool
 
 
 SAVED_MODEL_PATH = "models/1_tabular_data/xgboost_model.pkl"
@@ -53,19 +54,23 @@ def extract_features(y, sr):
     }
 
 
-def bulk_extract_features(file_ids: list):
+def extract_features_by_id(file_id):
+    """Extract features for the given file id."""
+
+    print(f"Extract features for {file_id}...")
+    y, sr = xeno_canto_api.client.load_recording(file_id)
+
+    return extract_features(y, sr)
+
+
+def bulk_extract_features(file_ids: list, n_processes=8):
     """Get extracted features for a list of file ids."""
 
-    feature_lists = {}
+    p = Pool(n_processes)
+    features = p.map(extract_features_by_id, file_ids)
+    df = pd.DataFrame(features)
 
-    for id in file_ids:
-        y, sr = xeno_canto_api.client.load_recording(id)
-        for key, val in extract_features(y, sr).items():
-            if key not in feature_lists:
-                feature_lists[key] = []
-            feature_lists[key].append(val)
-
-    return feature_lists
+    return df
 
 
 class XGBoostModel:
