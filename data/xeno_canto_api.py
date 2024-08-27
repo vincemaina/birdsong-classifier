@@ -38,7 +38,7 @@ class XenoCantoApi:
         """Save api response to cache."""
 
         file_path = self.get_local_path(query_string)
-        os.makedirs(CACHE_PATH)
+        os.makedirs(CACHE_PATH, exist_ok=True)
         with open(file_path, "w") as f:
             f.write(json.dumps(data))
 
@@ -82,7 +82,7 @@ class XenoCantoApi:
             res = requests.get(f"https://xeno-canto.org/{id}/download")
             if res.status_code == 200:
                 # Save the file
-                os.makedirs(RECORDINGS_PATH)
+                os.makedirs(RECORDINGS_PATH, exist_ok=True)
                 with open(file_path, "wb") as file:
                     file.write(res.content)
                 print(f"File saved successfully as {file_path}")
