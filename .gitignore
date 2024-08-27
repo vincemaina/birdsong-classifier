@@ -11,3 +11,6 @@ bird_recordings
 .vscode
 __pycache__
 best_model.pkl
+
+api_responses
+downloaded_recordings
