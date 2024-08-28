@@ -1,95 +1,56 @@
 import os
 import joblib
-import noisereduce as nr
-import librosa
 import numpy as np
 import pandas as pd
+import optuna
+from warnings import simplefilter
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import top_k_accuracy_score
-from data import xeno_canto_api
-from multiprocessing import Pool
+from sklearn.metrics import top_k_accuracy_score, accuracy_score, log_loss
+from sklearn.metrics import classification_report
+from data import xeno_canto_api, tabular_data
+from helpers.time import time_to_seconds
+
+simplefilter("ignore", category=FutureWarning)
 
 
 SAVED_MODEL_PATH = "models/1_tabular_data/xgboost_model.pkl"
 SAVED_LABEL_ENCODER_PATH = "models/1_tabular_data/xgboost_label_encoder.pkl"
 
 
-def extract_features(y, sr):
-    """Extract required features for this model."""
-
-    y = nr.reduce_noise(y, sr)  # Apply spectral gate
-    y = librosa.util.normalize(y)  # Normalize signal
-
-    spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
-    spectral_bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)
-    spectral_contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
-    spectral_flatness = librosa.feature.spectral_flatness(y=y)
-    spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
-    zcr = librosa.feature.zero_crossing_rate(y=y)
-    rms = librosa.feature.rms(y=y)
-
-    return {
-        # Centroid
-        "mean_centroid": np.mean(spectral_centroid),
-        "std_centroid": np.std(spectral_centroid),
-        # Bandwidth
-        "mean_bandwidth": np.mean(spectral_bandwidth),
-        "std_bandwidth": np.std(spectral_bandwidth),
-        # Contrast
-        "mean_contrast": np.mean(spectral_contrast),
-        "std_contrast": np.std(spectral_contrast),
-        # Flatness
-        "mean_flatness": np.mean(spectral_flatness),
-        "std_flatness": np.std(spectral_flatness),
-        # Rolloff
-        "mean_rolloff": np.mean(spectral_rolloff),
-        "std_rolloff": np.std(spectral_rolloff),
-        # Zero_crossing_rate
-        "mean_zcr": np.mean(zcr),
-        "std_zcr": np.std(zcr),
-        # RMS
-        "mean_rms": np.mean(rms),
-        "std_rms": np.std(rms),
-    }
-
-
-def extract_features_by_id(file_id):
-    """Extract features for the given file id."""
-
-    print(f"Extract features for {file_id}...")
-    y, sr = xeno_canto_api.client.load_recording(file_id)
-
-    return extract_features(y, sr)
-
-
-def bulk_extract_features(file_ids: list, n_processes=8):
-    """Get extracted features for a list of file ids."""
-
-    p = Pool(n_processes)
-    features = p.map(extract_features_by_id, file_ids)
-    df = pd.DataFrame(features)
-
-    return df
-
-
-def evaluate(model, X_test, y_test):
+def evaluate(X_test, y_test, model: XGBClassifier, le):
     """Evaluate model accuracy."""
 
     y_pred = model.predict_proba(X_test)
 
-    print("Predictions:", y_pred)
-    print("Len predictions:", len(y_pred))
+    print("\nNum predictions:", len(y_pred))
+    print("Num labels:", len(y_test))
 
-    print("True:", y_test)
-    print("Len true:", len(y_test))
-
-    # print("Accuracy score:", accuracy_score(y_test, y_pred))
-    print(
-        "Top k accuracy score:",
-        top_k_accuracy_score(y_test, y_pred, k=3, labels=np.arange(10)),
+    df = pd.DataFrame(
+        {
+            "Predictions": le.inverse_transform(np.argmax(y_pred, axis=1)),
+            "True": le.inverse_transform(y_test),
+            "Correct": np.argmax(y_pred, axis=1) == y_test,
+            "Confidence": np.max(y_pred, axis=1),
+        }
     )
+
+    print(df.sample(20))
+
+    print("\nAccuracy score:", accuracy_score(y_test, np.argmax(y_pred, axis=1)))
+    print("Log loss:", log_loss(y_test, y_pred, labels=np.arange(10)))
+
+    k = 3
+    top_k_score = top_k_accuracy_score(y_test, y_pred, k=k, labels=np.arange(10))
+    print(f"Top {k} accuracy score:", top_k_score, end="\n\n")
+
+    cr = classification_report(
+        le.inverse_transform(y_test), le.inverse_transform(np.argmax(y_pred, axis=1))
+    )
+    print(cr)
+
+    return top_k_score
 
 
 class XGBoostModel:
@@ -125,11 +86,8 @@ class XGBoostModel:
         joblib.dump(label_encoder, SAVED_LABEL_ENCODER_PATH)
         self._label_encoder = label_encoder
 
-    def train(self, file_ids, labels, seed=1):
+    def train(self, X, y, seed=1):
         """Train the model on the provided dataset."""
-
-        X = bulk_extract_features(file_ids)
-        y = pd.DataFrame({"name": labels})["name"]
 
         print(y.head())
 
@@ -148,34 +106,92 @@ class XGBoostModel:
 
         print("Finished training!")
 
-        evaluate(model, X_test, y_test)
-        self.save(model, le)
+        evaluate(X_test, y_test, model, le)
 
-    def predict(self, y, sr):
+        # Hyperparameter optimization
+
+        def objective(trial):
+            if trial.number % 10 == 0:
+                print("Trial:", trial.number)
+
+            # Define hyperparameters to tune
+            param = {
+                "objective": "multi:softprob",
+                "n_estimators": trial.suggest_int("n_estimators", 10, 500),
+                "max_depth": trial.suggest_int("max_depth", 1, 20),
+                "learning_rate": trial.suggest_loguniform("learning_rate", 0.001, 0.5),
+            }
+
+            # Train the model
+            model = XGBClassifier(**param)
+            model.fit(X_train, y_train)
+
+            # Predict probabilities
+            probabilities = model.predict_proba(X_test)
+
+            return top_k_accuracy_score(
+                y_test, probabilities, k=3, labels=np.arange(10)
+            )
+
+        optuna.logging.set_verbosity(optuna.logging.ERROR)
+
+        # Create a study and optimize
+        study = optuna.create_study(direction="maximize")  # Minimize log loss
+        study.optimize(objective, n_trials=100)  # type: ignore
+
+        # Get the best parameters
+        best_params = study.best_params
+        print("Best Parameters:", best_params)
+        print("Number of finished trials:", len(study.trials))
+        print("Best score: %.4f" % study.best_value)
+
+        # Get the best model
+        best_model = XGBClassifier(**best_params)
+        best_model.fit(X_train, y_train)
+
+        evaluate(X_test, y_test, best_model, le)
+
+        self.save(best_model, le)
+
+    def predict_proba(self, y, sr):
         """Predict class for given audio."""
 
-        features = extract_features(y, sr)
+        features = tabular_data.extract_features(y, sr)
 
         df = pd.DataFrame(features, index=[0])  # type: ignore
 
-        print(df.head())
+        print(df.head(), end="\n\n")
 
         model, le = self.load()
-        probabilities = model.predict_proba(df)
+        probabilities = model.predict_proba(df)[0]
 
-        top_pred = np.argmax(probabilities)
+        prob_map = {}
 
-        print("top:", top_pred)
+        for i in range(len(probabilities)):
+            bird_name = le.inverse_transform([i])[0]
+            if bird_name in prob_map:
+                raise Exception("Duplicate.")
+            prob_map[bird_name] = float(probabilities[i])
 
-        print("guess:", le.inverse_transform([top_pred]))
+        sorted_map = sorted(prob_map.items(), key=lambda x: x[1], reverse=True)
+
+        for i in sorted_map:
+            print(i)
 
         return probabilities
+
+    def evaluate(self, X_test, y_test):
+        """Evaluate the current model."""
+
+        model, le = self.load()
+        y_test = le.transform(y_test)
+        evaluate(X_test, y_test, model, le)
 
 
 if __name__ == "__main__":
     from data.selected_birds import birds
 
-    mode = "predict"
+    mode = "evaluate"
 
     if mode == "train":
         ids = []
@@ -186,14 +202,25 @@ if __name__ == "__main__":
             print("\ngenus:", genus)
             print("subspecies:", subspecies)
             data = xeno_canto_api.client.query(genus, subspecies)
-            for recording in data["recordings"][:10]:
+            print("Number of recordings:", data["numRecordings"])
+            recordings = [
+                i for i in data["recordings"] if time_to_seconds(i["length"]) < 300
+            ]
+            for recording in data["recordings"][:50]:
                 ids.append(recording["id"])
                 labels.append(genus + subspecies)
 
         model = XGBoostModel()
-        model.train(file_ids=ids, labels=labels)
 
-    else:
+        PATH = "models/1_tabular_data/features.pkl.xz"
+
+        X = tabular_data.bulk_extract_features(ids)
+
+        y = pd.DataFrame({"name": labels})["name"]
+
+        model.train(X, y)
+
+    elif mode == "predict":
         import random
 
         genus, subspecies = random.choice(birds)
@@ -203,13 +230,46 @@ if __name__ == "__main__":
 
         data = xeno_canto_api.client.query(genus, subspecies)
 
+        print("Number of recordings:", data["numRecordings"])
+
         recording_id = data["recordings"][-1]["id"]
 
         y, sr = xeno_canto_api.client.load_recording(recording_id)
-        print(y)
 
         model = XGBoostModel()
 
-        prediction = model.predict(y, sr)
+        prediction = model.predict_proba(y, sr)
 
-        print("Prediction:", prediction)
+    elif mode == "evaluate":
+        print("Evaluate model performance.")
+
+        model = XGBoostModel()
+
+        ids = []
+        labels = []
+
+        for bird in birds:
+            genus, subspecies = bird
+            print("\ngenus:", genus)
+            print("subspecies:", subspecies)
+            data = xeno_canto_api.client.query(genus, subspecies)
+            print("Number of recordings:", data["numRecordings"])
+            recordings = [
+                i for i in data["recordings"] if time_to_seconds(i["length"]) < 300
+            ]
+            for recording in data["recordings"][50:80]:
+                ids.append(recording["id"])
+                labels.append(genus + subspecies)
+
+        model = XGBoostModel()
+
+        PATH = "models/1_tabular_data/features.pkl.xz"
+
+        X = tabular_data.bulk_extract_features(ids)
+
+        y = pd.DataFrame({"name": labels})["name"]
+
+        model.evaluate(X, y)
+
+    else:
+        raise Exception("Invalid mode selected.")
