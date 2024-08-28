@@ -7,6 +7,7 @@ import pandas as pd
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, log_loss, top_k_accuracy_score
 from data import xeno_canto_api
 from multiprocessing import Pool
 
@@ -73,6 +74,24 @@ def bulk_extract_features(file_ids: list, n_processes=8):
     return df
 
 
+def evaluate(model, X_test, y_test):
+    """Evaluate model accuracy."""
+
+    y_pred = model.predict_proba(X_test)
+
+    print("Predictions:", y_pred)
+    print("Len predictions:", len(y_pred))
+
+    print("True:", y_test)
+    print("Len true:", len(y_test))
+
+    # print("Accuracy score:", accuracy_score(y_test, y_pred))
+    print(
+        "Top k accuracy score:",
+        top_k_accuracy_score(y_test, y_pred, k=3, labels=np.arange(10)),
+    )
+
+
 class XGBoostModel:
     """Model that deals with tabular data extracted from an audio file."""
 
@@ -109,39 +128,45 @@ class XGBoostModel:
     def train(self, file_ids, labels, seed=1):
         """Train the model on the provided dataset."""
 
-        feature_lists = bulk_extract_features(file_ids)
+        X = bulk_extract_features(file_ids)
+        y = pd.DataFrame({"name": labels})["name"]
 
-        print(feature_lists)
-        #
-        # X = df["features"]
-        # y = df["name"]
-        #
-        # # Split training and test data
-        # X_train, X_test, y_train, y_test = train_test_split(
-        #     X, y, test_size=0.2, random_state=seed
-        # )
-        #
-        # le = LabelEncoder().fit(y)
-        # y_train = le.transform(y_train)
-        # y_test = le.transform(y_test)
-        #
-        # model = XGBClassifier(objective="multi:softprob")
-        # model.fit(X_train, y_train)
-        #
-        # self.evaluate(X_test, y_test)
-        # self.save(model, le)
+        print(y.head())
 
-    def evaluate(self, X, y):
-        """Evaluate model accuracy."""
+        # Split training and test data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=seed
+        )
 
-        # TODO: Add methods for evaluating accuracy here.
+        le = LabelEncoder()
+        y_train = le.fit_transform(y_train)
+        y_test = le.fit_transform(y_test)
+
+        model = XGBClassifier(objective="multi:softprob")
+        model.fit(X_train, y_train)
+
+        print("Finished training!")
+
+        evaluate(model, X_test, y_test)
+        self.save(model, le)
 
     def predict(self, y, sr):
         """Predict class for given audio."""
 
         features = extract_features(y, sr)
-        model = self.load()
-        probabilities = model.predict_proba(features)
+
+        df = pd.DataFrame(features, index=[0])
+
+        print(df.head())
+
+        model, le = self.load()
+        probabilities = model.predict_proba(df)
+
+        top_pred = np.argmax(probabilities)
+
+        print("top:", top_pred)
+
+        print("guess:", le.inverse_transform([top_pred]))
 
         return probabilities
 
@@ -149,37 +174,41 @@ class XGBoostModel:
 if __name__ == "__main__":
     from data.selected_birds import birds
 
-    ids = []
-    labels = []
+    mode = "predict"
 
-    for bird in birds:
-        genus, subspecies = bird
-        print("\ngenus:", genus)
+    if mode == "train":
+        ids = []
+        labels = []
+
+        for bird in birds:
+            genus, subspecies = bird
+            print("\ngenus:", genus)
+            print("subspecies:", subspecies)
+            data = xeno_canto_api.client.query(genus, subspecies)
+            for recording in data["recordings"][:10]:
+                ids.append(recording["id"])
+                labels.append(genus + subspecies)
+
+        model = XGBoostModel()
+        model.train(file_ids=ids, labels=labels)
+
+    else:
+        import random
+
+        genus, subspecies = random.choice(birds)
+
+        print("genus:", genus)
         print("subspecies:", subspecies)
+
         data = xeno_canto_api.client.query(genus, subspecies)
-        for recording in data["recordings"][:3]:
-            ids.append(recording["id"])
-            labels.append(genus + subspecies)
 
-    model = XGBoostModel()
-    model.train(file_ids=ids, labels=labels)
+        recording_id = data["recordings"][-1]["id"]
 
-    # import random
-    #
-    # genus, subspecies = random.choice(birds)
-    #
-    # print("genus:", genus)
-    # print("subspecies:", subspecies)
-    #
-    # data = xeno_canto_api.client.query(genus, subspecies)
-    #
-    # recording_id = data["recordings"][0]["id"]
-    #
-    # y, sr = xeno_canto_api.client.load_recording(recording_id)
-    # print(y)
-    #
-    # model = XGBoostModel()
-    #
-    # features = model.extract_features(y=y, sr=sr)
-    #
-    # print(features)
+        y, sr = xeno_canto_api.client.load_recording(recording_id)
+        print(y)
+
+        model = XGBoostModel()
+
+        prediction = model.predict(y, sr)
+
+        print("Prediction:", prediction)
