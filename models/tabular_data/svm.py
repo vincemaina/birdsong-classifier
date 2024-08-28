@@ -11,7 +11,11 @@ from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import classification_report, top_k_accuracy_score
+from sklearn.metrics import (
+    classification_report,
+    top_k_accuracy_score,
+    confusion_matrix,
+)
 from warnings import simplefilter
 
 simplefilter("ignore", category=FutureWarning)
@@ -52,6 +56,10 @@ def evaluate_model(X_test, y_test, model, le) -> None:
     for k in [1, 2, 3]:
         top_k_accuracy = top_k_accuracy_score(y_test, y_proba, k=k)
         print(f"Top-{k} Accuracy: {top_k_accuracy * 100 :.2f}%")
+
+    # Display a confusion confusion
+    cm = confusion_matrix(y_test, np.argmax(y_proba, axis=1))
+    print("\nConfusion Matrix:\n\n", cm)
 
 
 class SVM:
@@ -176,6 +184,7 @@ class SVM:
         """Make a prediction."""
 
         model, le, scaler = self.load_model()
+        X = scaler.transform(X)  # type: ignore
 
         return model.predict_proba(X), le
 
@@ -189,7 +198,7 @@ if __name__ == "__main__":
     from helpers.time import time_to_seconds
     from data.tabular_data import bulk_extract_features, extract_features_by_id
 
-    mode = "Evaluate"
+    mode = "Predict"
 
     if mode == "Train":
         model = SVM()
