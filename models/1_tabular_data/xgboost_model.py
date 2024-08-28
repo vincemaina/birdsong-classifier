@@ -7,7 +7,7 @@ import pandas as pd
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, log_loss, top_k_accuracy_score
+from sklearn.metrics import top_k_accuracy_score
 from data import xeno_canto_api
 from multiprocessing import Pool
 
@@ -139,8 +139,9 @@ class XGBoostModel:
         )
 
         le = LabelEncoder()
-        y_train = le.fit_transform(y_train)
-        y_test = le.fit_transform(y_test)
+        le = le.fit(y)
+        y_train = le.transform(y_train)
+        y_test = le.transform(y_test)
 
         model = XGBClassifier(objective="multi:softprob")
         model.fit(X_train, y_train)
@@ -155,7 +156,7 @@ class XGBoostModel:
 
         features = extract_features(y, sr)
 
-        df = pd.DataFrame(features, index=[0])
+        df = pd.DataFrame(features, index=[0])  # type: ignore
 
         print(df.head())
 
