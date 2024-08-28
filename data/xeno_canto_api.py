@@ -3,6 +3,7 @@ import time
 import json
 import os
 import librosa
+from urllib.parse import urlencode, urljoin, urlparse
 
 
 BASE_API_ENDPOINT = "https://xeno-canto.org/api/2/recordings"
@@ -42,15 +43,23 @@ class XenoCantoApi:
         with open(file_path, "w") as f:
             f.write(json.dumps(data))
 
-    def query(self, genus: str, subspecies: str):
+    def query(
+        self,
+        genus: str,
+        subspecies: str,
+        load_from_cache: bool = True,
+        save_to_cache: bool = True,
+    ) -> dict:
         """Query xeno-canto API for recordings of the given birds."""
 
-        query_string = f'?query=grp:"birds"gen:"{genus}"ssp:"{subspecies}"'
+        query_string = f"?query=gen:{genus} ssp:{subspecies}"
+        print("Query string:", query_string)
 
         # Check if cached already
-        cached_res = self.load_from_cache(query_string)
-        if cached_res is not None:
-            return cached_res
+        if load_from_cache:
+            cached_res = self.load_from_cache(query_string)
+            if cached_res is not None:
+                return cached_res
 
         # Ensure has been longer than 1 second since last call
         if self._last_call is not None:
@@ -60,13 +69,15 @@ class XenoCantoApi:
 
         # Call the API
         print("Querying api")
+        print(BASE_API_ENDPOINT + query_string)
         res = requests.get(BASE_API_ENDPOINT + query_string)
         self._last_call = time.time()  # Update last call time
 
         json_data = res.json()
 
         # Save to cache
-        self.save_to_cache(data=json_data, query_string=query_string)
+        if save_to_cache:
+            self.save_to_cache(json_data, query_string)
 
         return json_data
 
@@ -97,8 +108,18 @@ client = XenoCantoApi()  # Singleton instance
 
 
 if __name__ == "__main__":
-    data = client.query(genus="fringilla", subspecies="coelebs")
+    data = client.query(
+        genus="fringilla",
+        subspecies="coelebs",
+        load_from_cache=False,
+        save_to_cache=False,
+    )
+
     print("Number of recordings:", data["numRecordings"])
+
+    if int(data["numRecordings"]) == 0:
+        print("No recordings found.")
+        exit(1)
 
     first_recording_id = data["recordings"][0]["id"]
     print("First recording:", first_recording_id)
@@ -106,4 +127,4 @@ if __name__ == "__main__":
     y, sr = client.load_recording(first_recording_id)
     print("Successfully loaded recording.")
 
-    print("Samples:", y)
+    print("Samples:", len(y))
