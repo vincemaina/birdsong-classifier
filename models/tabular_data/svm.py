@@ -1,5 +1,5 @@
 """
-Support vector model for classifying birdsbased based on tabular data extracted from recordings.
+Support vector model for classifying birds based on tabular data extracted from recordings.
 """
 
 import os
